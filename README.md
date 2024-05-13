@@ -4,6 +4,10 @@
 
 Idk what to include for now, but guess it's WIP, if the above text wasn't obvious.
 
+## Preview
+
+![Grub preview](preview.png)
+
 ## Credits
 
 Based on [vinceliuice's grub2-themes](https://github.com/vinceliuice/grub2-themes).
