@@ -1,6 +1,7 @@
 # Notes to self:
 # Replace ${theme} with min_rog
-# initial test done, check #1
+# Test #1:
+# Changes made to code, Grub theme installed, to check if it worked
 
 
 #! /usr/bin/env bash
@@ -105,15 +106,15 @@ generate() {
   cp -a --no-preserve=ownership "${REO_DIR}/backgrounds/${screen}.jpg" "${THEME_DIR}/min_rog/background.jpg"
 
   if [[ ${screen} == 'ultrawide' ]]; then
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-${icon}/icons-1080p" "${THEME_DIR}/min_rog/icons"
+    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-1080p" "${THEME_DIR}/min_rog/icons"
     cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-select/select-1080p/"*.png "${THEME_DIR}/min_rog"
     cp -a --no-preserve=ownership "${REO_DIR}/assets/info-1080p.png" "${THEME_DIR}/min_rog/info.png"
   elif [[ ${screen} == 'ultrawide2k' ]]; then
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-${icon}/icons-2k" "${THEME_DIR}/min_rog/icons"
+    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-2k" "${THEME_DIR}/min_rog/icons"
     cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-select/select-2k/"*.png "${THEME_DIR}/min_rog"
     cp -a --no-preserve=ownership "${REO_DIR}/assets/info-2k.png" "${THEME_DIR}/min_rog/info.png"
   else
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-${icon}/icons-${screen}" "${THEME_DIR}/min_rog/icons"
+    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-${screen}" "${THEME_DIR}/min_rog/icons"
     cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-select/select-${screen}/"*.png "${THEME_DIR}/min_rog"
     cp -a --no-preserve=ownership "${REO_DIR}/assets/info-${screen}.png" "${THEME_DIR}/min_rog/info.png"
   fi
@@ -334,7 +335,6 @@ install_dialog() {
 }
 
 remove() {
-
   # Check for root access and proceed if it is present
   if [ "$UID" -eq "$ROOT_UID" ]; then
     prompt -i "Checking for the existence of themes directory..."
@@ -368,7 +368,7 @@ remove() {
       exit 1
     fi
 
-    local current_theme="" # Declaration and assignment should be done seperately ==> https://github.com/koalaman/shellcheck/wiki/SC2155
+    local current_theme=""
 
     current_theme="$(grep 'GRUB_THEME=' $grub_config_location | grep -v \#)"
 
@@ -396,7 +396,7 @@ remove() {
     else
       #Ask for password
       prompt -e "\n [ Error! ] -> Run me as root! "
-      read -r -p " [ Trusted ] Specify the root password : " -t ${MAX_DELAY} -s #when using "read" command, "-r" option must be supplied ==> https://github.com/koalaman/shellcheck/wiki/SC2162
+      read -r -p " [ Trusted ] Specify the root password : " -t ${MAX_DELAY} -s
 
       if sudo -S echo <<< $REPLY 2> /dev/null && echo; then
         #Correct password, use with sudo's stdin
@@ -542,10 +542,9 @@ if [[ "${dialog:-}" == 'false' ]]; then
     done
   elif [[ "${remove:-}" == 'true' ]]; then
     remove "min-rog"
-    done
   fi
-  else
-    dialog_installer
+else
+  dialog_installer
 fi
 
 exit 0
