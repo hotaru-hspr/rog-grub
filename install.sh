@@ -1,7 +1,6 @@
 # Notes to self:
 # Replace ${theme} with min_rog
-# Test #1:
-# Changes made to code, Grub theme installed, to check if it worked
+# initial test done, check #1 - Installed, but FAILED to run theme
 
 
 #! /usr/bin/env bash
@@ -68,8 +67,6 @@ cat << EOF
 Usage: $0 [OPTION]...
 
 OPTIONS:
-  -t, --theme     theme variant(s)          [tela|vimix|stylish|whitesur]       (default is tela)
-  -i, --icon      icon variant(s)           [color|white|whitesur]              (default is color)
   -s, --screen    screen display variant(s) [1080p|2k|4k|ultrawide|ultrawide2k] (default is 1080p)
   -r, --remove    Remove theme              [tela|vimix|stylish|whitesur]       (must add theme name option, default is tela)
 
@@ -103,7 +100,7 @@ generate() {
   # Don't preserve ownership because the owner will be root, and that causes the script to crash if it is ran from terminal by sudo
   cp -a --no-preserve=ownership "${REO_DIR}/common/"{*.png,*.pf2} "${THEME_DIR}/min_rog"
   cp -a --no-preserve=ownership "${REO_DIR}/config/theme-${screen}.txt" "${THEME_DIR}/min_rog/theme.txt"
-  cp -a --no-preserve=ownership "${REO_DIR}/backgrounds/${screen}.jpg" "${THEME_DIR}/min_rog/background.jpg"
+  cp -a --no-preserve=ownership "${REO_DIR}/backgrounds/${screen}.png" "${THEME_DIR}/min_rog/background.png"
 
   if [[ ${screen} == 'ultrawide' ]]; then
     cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-1080p" "${THEME_DIR}/min_rog/icons"
@@ -170,10 +167,10 @@ install() {
 
     if grep "GRUB_BACKGROUND=" /etc/default/grub 2>&1 >/dev/null; then
       #Replace GRUB_BACKGROUND
-      sed -i "s|.*GRUB_BACKGROUND=.*|GRUB_BACKGROUND=\"${THEME_DIR}/min_rog/background.jpg\"|" /etc/default/grub
+      sed -i "s|.*GRUB_BACKGROUND=.*|GRUB_BACKGROUND=\"${THEME_DIR}/min_rog/background.png\"|" /etc/default/grub
     else
       #Append GRUB_BACKGROUND
-      echo "GRUB_BACKGROUND=\"${THEME_DIR}/min_rog/background.jpg\"" >> /etc/default/grub
+      echo "GRUB_BACKGROUND=\"${THEME_DIR}/min_rog/background.png\"" >> /etc/default/grub
     fi
 
     # Make sure the right resolution for grub is set
