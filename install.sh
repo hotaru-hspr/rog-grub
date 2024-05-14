@@ -1,8 +1,3 @@
-# Notes to self:
-# Replace ${theme} with min_rog
-# initial test done, check #1 - Installed, but FAILED to run theme
-
-
 #! /usr/bin/env bash
 
 # Exit Immediately if a command fails
@@ -56,6 +51,9 @@ prompt () {
   esac
 }
 
+# Credits
+prompt -e "\nMinimal ROG theme for Grub/Grub2 by hotaru (GitHub/hotaru-hspr)\nBased on Grub2 themes by vinceliuice (GitHub/vinceliuice)\n"
+
 # Check command availability
 function has_command() {
   command -v $1 &> /dev/null #with "&>", all output will be redirected.
@@ -63,15 +61,9 @@ function has_command() {
 
 usage() {
 cat << EOF
-
-Usage: $0 [OPTION]...
-
 OPTIONS:
-  -s, --screen    screen display variant(s) [1080p|2k|4k|ultrawide|ultrawide2k] (default is 1080p)
+  -s, --screen    Screen resolution variant(s) [1080p|2k|4k|ultrawide|ultrawide2k] (default is 1080p)
   -r, --remove    Remove theme
-
-  -b, --boot      install theme into '/boot/grub' or '/boot/grub2'
-  -g, --generate  do not install but generate theme into chosen directory (must add your directory)
 
   -h, --help      Show this help
 
@@ -87,47 +79,14 @@ generate() {
       THEME_DIR='/boot/grub2/themes'
     fi
   fi
+  # Credits
+  prompt -e "\nMinimal ROG theme for Grub/Grub2 by hotaru (GitHub/hotaru-hspr)\nBased on Grub2 themes by vinceliuice (GitHub/vinceliuice)\n"
 
   # Make a themes directory if it doesn't exist
   prompt -i "\n Checking for the existence of themes directory..."
 
   [[ -d "${THEME_DIR}/min_rog" ]] && rm -rf "${THEME_DIR}/min_rog"
   mkdir -p "${THEME_DIR}/min_rog"
-
-  # ASCII ROG Logo
-  prompt -i "\n\n\n                                                                           #######################  
-                                                                   #########################        
-                                                               #########################            
-                                                            #######################              ###
-                                                          #####################              #######
-                                                        ###################             ############
-                                                      ##################            ##############  
-                                                    ################            ###############     
-                                                  ################          ###############   ##    
-                                                ##############           ##############   #####     
-                                              #############          ###############   ########     
-                                            #############         ##############   ###########      
-##                                        ############         ##############  ##############       
-###                                     ###########        ##############   #################       
- ####                                 ###########       ##############  ####################        
- #####                              ###########      #############   ######################         
-  ######     ####                 ##########      #############  ###########   ###########          
-   #######    ######            ##########     #############  #########       ###########           
-   ########    ########       ##########    ############# ########           ###########            
-     ########   #####################    ############  #######              ###########             
-       ########  ##################   #############  #####                 ###########              
-          ######  ###############   ############ ####                    ############               
-             ##### ############  ###########    #                       ############                
-                 ## ######### #############                           #############                 
-                      ######  ####################                 ##############                   
-                       ######     ##############################################                    
-                        #######         ######################################                      
-                          ######              ##############################                        
-                            ######                    ####################                          
-                              #####                                                                 
-                                  ###                                                               \n
-                                  
-  Minimal ROG theme for Grub/Grub2 by hotaru (GitHub/hotaru-hspr)\nBased on Grub2 themes by vinceliuice (GitHub/vinceliuice)\n\n"
 
   # Copy theme
   prompt -i "\n Installing Minimal ROG - ${screen} theme..."
@@ -247,9 +206,9 @@ install() {
     fi
 
     # Update grub config
-    prompt -i "\n Updating grub config... \n"
+    prompt -s "\n Updating grub config...\n"
     updating_grub
-    prompt -w "\n * At the next restart of your computer you will see your new Grub theme: '$theme' \n"
+    prompt -w "\n* On restart, you could see the Minimal ROG theme applied on your Grub \n"
 
   #Check if password is cached (if cache timestamp has not expired yet)
   elif sudo -n true 2> /dev/null && echo; then
@@ -336,13 +295,12 @@ updating_grub() {
   elif has_command dnf || has_command rpm-ostree; then 
     #Check for BIOS
     if [[ -f /boot/grub2/grub.cfg ]]; then
-      prompt -s "Find config file on /boot/grub2/grub.cfg ...\n"
       grub2-mkconfig -o /boot/grub2/grub.cfg
     fi
   fi
 
   # Success message
-  prompt -s "\n * All done!"
+  prompt -s "\n* All done! Restart to see changes!"
 }
 
 function install_program () {
@@ -369,7 +327,7 @@ install_dialog() {
 remove() {
   # Check for root access and proceed if it is present
   if [ "$UID" -eq "$ROOT_UID" ]; then
-    prompt -i "Checking for the existence of themes directory..."
+    prompt -i " Checking for the existence of themes directory..."
     if [[ -d "${THEME_DIR}/min_rog" ]]; then
       prompt -i "\n Find installed theme: '${THEME_DIR}/min_rog'..."
       rm -rf "${THEME_DIR}/min_rog"
