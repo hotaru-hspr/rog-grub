@@ -1,4 +1,4 @@
-# Minimalist Grub2 theme with ROG logo
+# Minimal ROG theme for Grub/Grub2
 
 ## Preview
 
@@ -36,7 +36,11 @@ To open the help menu:
 
 ## Notes
 
-Only 2k resolution has been tested, other resolutions may or may not work. If you have tested any of them and they work fine, message me.
+- Only 2k resolution has been tested, other resolutions may or may not work. If you have tested any of them and they work fine, message me.
+
+- Code isn't completely clean, contains some dependancies from the original source code, which was modified to accomodate the new theme files. Will be cleaned eventually.
+
+- TUI Installation menu for simpler installation will be added later, alongside improvements in error handling.
 
 ## Credits
 
@@ -44,4 +48,4 @@ Based on [vinceliuice's grub2-themes](https://github.com/vinceliuice/grub2-theme
 
 Inspired from [thekarananand's ROG Grub theme](https://github.com/thekarananand/ROG_GRUB_Theme).
 
-Logo © ASUS.
+Logo © ASUSTeK Computer Inc.
