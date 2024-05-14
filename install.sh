@@ -68,10 +68,10 @@ Usage: $0 [OPTION]...
 
 OPTIONS:
   -s, --screen    screen display variant(s) [1080p|2k|4k|ultrawide|ultrawide2k] (default is 1080p)
-  -r, --remove    Remove theme              [tela|vimix|stylish|whitesur]       (must add theme name option, default is tela)
+  -r, --remove    Remove theme
 
   -b, --boot      install theme into '/boot/grub' or '/boot/grub2'
-  -g, --generate  do not install but generate theme into chosen directory       (must add your directory)
+  -g, --generate  do not install but generate theme into chosen directory (must add your directory)
 
   -h, --help      Show this help
 
@@ -93,6 +93,41 @@ generate() {
 
   [[ -d "${THEME_DIR}/min_rog" ]] && rm -rf "${THEME_DIR}/min_rog"
   mkdir -p "${THEME_DIR}/min_rog"
+
+  # ASCII ROG Logo
+  prompt -i "\n\n\n                                                                           #######################  
+                                                                   #########################        
+                                                               #########################            
+                                                            #######################              ###
+                                                          #####################              #######
+                                                        ###################             ############
+                                                      ##################            ##############  
+                                                    ################            ###############     
+                                                  ################          ###############   ##    
+                                                ##############           ##############   #####     
+                                              #############          ###############   ########     
+                                            #############         ##############   ###########      
+##                                        ############         ##############  ##############       
+###                                     ###########        ##############   #################       
+ ####                                 ###########       ##############  ####################        
+ #####                              ###########      #############   ######################         
+  ######     ####                 ##########      #############  ###########   ###########          
+   #######    ######            ##########     #############  #########       ###########           
+   ########    ########       ##########    ############# ########           ###########            
+     ########   #####################    ############  #######              ###########             
+       ########  ##################   #############  #####                 ###########              
+          ######  ###############   ############ ####                    ############               
+             ##### ############  ###########    #                       ############                
+                 ## ######### #############                           #############                 
+                      ######  ####################                 ##############                   
+                       ######     ##############################################                    
+                        #######         ######################################                      
+                          ######              ##############################                        
+                            ######                    ####################                          
+                              #####                                                                 
+                                  ###                                                               \n
+                                  
+  Minimal ROG theme for Grub/Grub2 by hotaru (GitHub/hotaru-hspr)\nBased on Grub2 themes by vinceliuice (GitHub/vinceliuice)\n\n"
 
   # Copy theme
   prompt -i "\n Installing Minimal ROG - ${screen} theme..."
