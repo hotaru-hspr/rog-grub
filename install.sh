@@ -1,5 +1,3 @@
-# testing
-
 #! /usr/bin/env bash
 
 # Exit Immediately if a command fails
