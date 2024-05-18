@@ -36,8 +36,6 @@ To open the help menu:
 
 ## Notes
 
-- Only 2k resolution has been tested, other resolutions may or may not work. If you have tested any of them and they work fine, message me.
-
 - Code isn't completely clean, contains some dependancies from the original source code, which was modified to accomodate the new theme files. Will be cleaned eventually.
 
 - TUI Installation menu for simpler installation will be added later, alongside improvements in error handling.
