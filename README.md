@@ -34,12 +34,6 @@ To open the help menu:
 
 `sudo ./install.sh -h`
 
-## Notes
-
-- Code isn't completely clean, contains some dependancies from the original source code, which was modified to accomodate the new theme files. Will be cleaned eventually.
-
-- TUI Installation menu for simpler installation will be added later, alongside improvements in error handling.
-
 ## Credits
 
 Based on [vinceliuice's grub2-themes](https://github.com/vinceliuice/grub2-themes).
