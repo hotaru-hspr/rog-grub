@@ -1,540 +1,505 @@
-#! /usr/bin/env bash
+#!/usr/bin/env bash
+# Minimal ROG theme installer for GRUB/GRUB2.
+# Based on GRUB2 themes by vinceliuice.
 
-# Exit Immediately if a command fails
-set -o errexit
+set -Eeuo pipefail
 
-readonly ROOT_UID=0
-readonly Project_Name="GRUB2::THEMES"
-readonly MAX_DELAY=20                               # max delay for user to enter root password
-tui_root_login=
+ROOT_UID=0
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+THEME_DIR="${THEME_DIR:-/usr/share/grub/themes}"
+STATE_DIR="${STATE_DIR:-/var/lib/min-rog-grub}"
+GRUB_DEFAULT_FILE="${GRUB_DEFAULT_FILE:-/etc/default/grub}"
+MANAGED_MARKER="# min-rog-managed"
+SCREEN_VARIANTS=(1080p 2k 4k ultrawide ultrawide2k)
 
-THEME_DIR="/usr/share/grub/themes"
-REO_DIR="$(cd $(dirname $0) && pwd)"
+info() { printf 'INFO: %s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-THEME_VARIANTS=('min-rog')
-ICON_VARIANTS=('white')
-SCREEN_VARIANTS=('1080p' '2k' '4k' 'ultrawide' 'ultrawide2k')
-
-#################################
-#   :::::: C O L O R S ::::::   #
-#################################
-
-CDEF=" \033[0m"                                     # default color
-CCIN=" \033[0;36m"                                  # info color
-CGSC=" \033[0;32m"                                  # success color
-CRER=" \033[0;31m"                                  # error color
-CWAR=" \033[0;33m"                                  # waring color
-b_CDEF=" \033[1;37m"                                # bold default color
-b_CCIN=" \033[1;36m"                                # bold info color
-b_CGSC=" \033[1;32m"                                # bold success color
-b_CRER=" \033[1;31m"                                # bold error color
-b_CWAR=" \033[1;33m"                                # bold warning color
-
-#######################################
-#   :::::: F U N C T I O N S ::::::   #
-#######################################
-
-# echo like ... with flag type and display message colors
-prompt () {
-  case ${1} in
-    "-s"|"--success")
-      echo -e "${b_CGSC}${@/-s/}${CDEF}";;    # print success message
-    "-e"|"--error")
-      echo -e "${b_CRER}${@/-e/}${CDEF}";;    # print error message
-    "-w"|"--warning")
-      echo -e "${b_CWAR}${@/-w/}${CDEF}";;    # print warning message
-    "-i"|"--info")
-      echo -e "${b_CCIN}${@/-i/}${CDEF}";;    # print info message
-    *)
-    echo -e "$@"
-    ;;
-  esac
-}
-
-# Credits
-prompt -e "\nMinimal ROG theme for Grub/Grub2 by hotaru (GitHub/hotaru-hspr)\nBased on Grub2 themes by vinceliuice (GitHub/vinceliuice)\n"
-
-# Check command availability
-function has_command() {
-  command -v $1 &> /dev/null #with "&>", all output will be redirected.
+has_command() {
+  command -v "$1" >/dev/null 2>&1
 }
 
 usage() {
-cat << EOF
-OPTIONS:
-  -s, --screen    Screen resolution variant(s) [1080p|2k|4k|ultrawide|ultrawide2k] (default is 1080p)
-  -r, --remove    Remove theme
+  cat <<'EOF'
+Usage:
+  sudo ./install.sh --screen <1080p|2k|4k|ultrawide|ultrawide2k> [--boot]
+  sudo ./install.sh --remove
+  ./install.sh --generate <directory> --screen <variant>
 
-  -h, --help      Show this help
+Options:
+  -s, --screen VARIANT   Screen-resolution variant (default: 1080p)
+  -r, --remove           Remove this theme and restore the previous theme line
+  -g, --generate DIR     Generate runtime assets under DIR without changing GRUB
+  -b, --boot             Install assets below /boot/grub[/2]/themes
+  -h, --help             Show this help
 
+The privileged install changes only GRUB_THEME. It does not alter the background,
+graphics mode, terminal mode, EFI boot entries, or partition layout.
 EOF
 }
 
+require_root() {
+  [[ ${EUID:-$(id -u)} -eq $ROOT_UID ]] ||
+    die "Run the install/remove action with sudo; this script will not request a password itself."
+}
+
+validate_screen() {
+  local requested=$1 variant
+  for variant in "${SCREEN_VARIANTS[@]}"; do
+    [[ "$requested" == "$variant" ]] && return 0
+  done
+  die "Unsupported screen variant: $requested"
+}
+
+backup_grub_defaults() {
+  [[ -f "$GRUB_DEFAULT_FILE" ]] || die "Cannot find GRUB defaults: $GRUB_DEFAULT_FILE"
+  install -d -m 0700 "$STATE_DIR/backups"
+  local backup
+  backup=$(mktemp "$STATE_DIR/backups/grub.XXXXXX")
+  cp -a --no-target-directory "$GRUB_DEFAULT_FILE" "$backup"
+  printf '%s\n' "$backup"
+}
+
+write_recorded_theme_dir() {
+  local value=$1 tmp
+  install -d -m 0700 "$STATE_DIR"
+  tmp=$(mktemp "$STATE_DIR/.installed-theme-dir.XXXXXX")
+  printf '%s\n' "$value" > "$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$STATE_DIR/installed-theme-dir"
+}
+
+record_theme_dir() {
+  write_recorded_theme_dir "$THEME_DIR"
+}
+
+load_recorded_theme_dir() {
+  [[ -f "$STATE_DIR/installed-theme-dir" ]] || return 0
+  local recorded
+  recorded=$(<"$STATE_DIR/installed-theme-dir")
+  [[ "$recorded" == /* ]] || die "Recorded theme directory is not an absolute path: $recorded"
+  THEME_DIR=$recorded
+}
+
+capture_previous_theme() {
+  [[ -f "$GRUB_DEFAULT_FILE" ]] || die "Cannot find GRUB defaults: $GRUB_DEFAULT_FILE"
+  install -d -m 0700 "$STATE_DIR"
+  [[ -e "$STATE_DIR/initialized" ]] && return 0
+
+  local previous tmp
+  previous=$(awk '/^[[:space:]]*GRUB_THEME[[:space:]]*=/{line=$0} END{if (line) print line}' "$GRUB_DEFAULT_FILE")
+  tmp=$(mktemp "$STATE_DIR/.previous-theme-line.XXXXXX")
+  printf '%s\n' "$previous" > "$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$STATE_DIR/previous-theme-line"
+  : > "$STATE_DIR/initialized"
+  chmod 0600 "$STATE_DIR/initialized"
+}
+
+replace_from_awk() {
+  local destination=$1
+  shift
+  local tmp
+  tmp=$(mktemp "$(dirname "$destination")/.grub.XXXXXX")
+  if ! cp --attributes-only --preserve=all --no-target-directory "$destination" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! awk "$@" "$destination" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$destination"
+}
+
+set_theme_config() {
+  local theme_path="${THEME_DIR}/min_rog/theme.txt"
+  local managed_line="GRUB_THEME=\"${theme_path}\" ${MANAGED_MARKER}"
+  replace_from_awk "$GRUB_DEFAULT_FILE" -v managed="$managed_line" '
+    BEGIN { written=0 }
+    /^[[:space:]]*GRUB_THEME[[:space:]]*=/ {
+      if (!written) { print managed; written=1 }
+      next
+    }
+    { print }
+    END { if (!written) print managed }
+  '
+}
+
+unset_theme_config() {
+  local theme_path="${THEME_DIR}/min_rog/theme.txt"
+  local previous=""
+  [[ -f "$STATE_DIR/previous-theme-line" ]] && previous=$(<"$STATE_DIR/previous-theme-line")
+
+  if ! awk -v path="$theme_path" '
+      function theme_value(line, value, body, end, rest, result) {
+        value=line
+        sub(/^[[:space:]]*GRUB_THEME[[:space:]]*=[[:space:]]*/, "", value)
+        if (substr(value, 1, 1) == "\"") {
+          body=substr(value, 2)
+          end=index(body, "\"")
+          if (!end) return "__MIN_ROG_INVALID__"
+          result=substr(body, 1, end - 1)
+          rest=substr(body, end + 1)
+        } else if (substr(value, 1, 1) == "\047") {
+          body=substr(value, 2)
+          end=index(body, "\047")
+          if (!end) return "__MIN_ROG_INVALID__"
+          result=substr(body, 1, end - 1)
+          rest=substr(body, end + 1)
+        } else {
+          result=value
+          sub(/[[:space:]].*/, "", result)
+          rest=substr(value, length(result) + 1)
+        }
+        if (rest != "" && rest !~ /^[[:space:]]*$/ && rest !~ /^[[:space:]]+#/) return "__MIN_ROG_INVALID__"
+        return result
+      }
+      /^[[:space:]]*GRUB_THEME[[:space:]]*=/ && theme_value($0) == path { found=1 }
+      END { exit(found ? 0 : 1) }
+    ' "$GRUB_DEFAULT_FILE"; then
+    warn "The active GRUB theme is not managed by min-rog; leaving GRUB defaults unchanged."
+    return 3
+  fi
+
+  local foreign_present=false
+  if awk -v path="$theme_path" '
+      function theme_value(line, value, body, end, rest, result) {
+        value=line
+        sub(/^[[:space:]]*GRUB_THEME[[:space:]]*=[[:space:]]*/, "", value)
+        if (substr(value, 1, 1) == "\"") {
+          body=substr(value, 2)
+          end=index(body, "\"")
+          if (!end) return "__MIN_ROG_INVALID__"
+          result=substr(body, 1, end - 1)
+          rest=substr(body, end + 1)
+        } else if (substr(value, 1, 1) == "\047") {
+          body=substr(value, 2)
+          end=index(body, "\047")
+          if (!end) return "__MIN_ROG_INVALID__"
+          result=substr(body, 1, end - 1)
+          rest=substr(body, end + 1)
+        } else {
+          result=value
+          sub(/[[:space:]].*/, "", result)
+          rest=substr(value, length(result) + 1)
+        }
+        if (rest != "" && rest !~ /^[[:space:]]*$/ && rest !~ /^[[:space:]]+#/) return "__MIN_ROG_INVALID__"
+        return result
+      }
+      /^[[:space:]]*GRUB_THEME[[:space:]]*=/ && theme_value($0) != path { found=1 }
+      END { exit(found ? 0 : 1) }
+    ' "$GRUB_DEFAULT_FILE"; then
+    foreign_present=true
+  fi
+
+  replace_from_awk "$GRUB_DEFAULT_FILE" \
+    -v path="$theme_path" \
+    -v previous="$previous" \
+    -v foreign="$foreign_present" '
+      function theme_value(line, value, body, end, rest, result) {
+        value=line
+        sub(/^[[:space:]]*GRUB_THEME[[:space:]]*=[[:space:]]*/, "", value)
+        if (substr(value, 1, 1) == "\"") {
+          body=substr(value, 2)
+          end=index(body, "\"")
+          if (!end) return "__MIN_ROG_INVALID__"
+          result=substr(body, 1, end - 1)
+          rest=substr(body, end + 1)
+        } else if (substr(value, 1, 1) == "\047") {
+          body=substr(value, 2)
+          end=index(body, "\047")
+          if (!end) return "__MIN_ROG_INVALID__"
+          result=substr(body, 1, end - 1)
+          rest=substr(body, end + 1)
+        } else {
+          result=value
+          sub(/[[:space:]].*/, "", result)
+          rest=substr(value, length(result) + 1)
+        }
+        if (rest != "" && rest !~ /^[[:space:]]*$/ && rest !~ /^[[:space:]]+#/) return "__MIN_ROG_INVALID__"
+        return result
+      }
+      BEGIN { restored=0 }
+      /^[[:space:]]*GRUB_THEME[[:space:]]*=/ && theme_value($0) == path {
+        if (!restored && foreign != "true" && previous != "") {
+          print previous
+          restored=1
+        }
+        next
+      }
+      { print }
+    '
+}
+
+populate_theme_directory() {
+  local destination=$1 screen=$2
+  cp -a --no-preserve=ownership "$REPO_DIR/common/"{*.png,*.pf2} "$destination" || return 1
+  cp -a --no-preserve=ownership "$REPO_DIR/config/theme-${screen}.txt" "$destination/theme.txt" || return 1
+  cp -a --no-preserve=ownership "$REPO_DIR/backgrounds/${screen}.png" "$destination/background.png" || return 1
+
+  local asset_size=$screen
+  if [[ "$screen" == ultrawide ]]; then
+    asset_size=1080p
+  elif [[ "$screen" == ultrawide2k ]]; then
+    asset_size=2k
+  fi
+
+  cp -a --no-preserve=ownership "$REPO_DIR/assets/assets-white/icons-${asset_size}" "$destination/icons" || return 1
+  cp -a --no-preserve=ownership "$REPO_DIR/assets/assets-select/select-${asset_size}/"*.png "$destination" || return 1
+  cp -a --no-preserve=ownership "$REPO_DIR/assets/info-${asset_size}.png" "$destination/info.png" || return 1
+}
+
 generate() {
-  if [[ "${install_boot}" == 'true' ]]; then
-    if [[ -d "/boot/grub" ]]; then
-      THEME_DIR='/boot/grub/themes'
+  local screen=$1
+  validate_screen "$screen"
+  install -d "$THEME_DIR" || return 1
+
+  local target="$THEME_DIR/min_rog" staging old=""
+  if ! staging=$(mktemp -d "$THEME_DIR/.min_rog.new.XXXXXX"); then
+    return 1
+  fi
+  if ! populate_theme_directory "$staging" "$screen"; then
+    rm -rf "$staging"
+    return 1
+  fi
+
+  if [[ -e "$target" || -L "$target" ]]; then
+    if ! old=$(mktemp -d "$THEME_DIR/.min_rog.old.XXXXXX"); then
+      rm -rf "$staging"
+      return 1
     fi
-    if [[ -d "/boot/grub2" ]]; then
-      THEME_DIR='/boot/grub2/themes'
+    if ! rmdir "$old" || ! mv "$target" "$old"; then
+      rm -rf "$staging" "$old"
+      return 1
     fi
   fi
-  # Credits
-  prompt -e "\nMinimal ROG theme for Grub/Grub2 by hotaru (GitHub/hotaru-hspr)\nBased on Grub2 themes by vinceliuice (GitHub/vinceliuice)\n"
 
-  # Make a themes directory if it doesn't exist
-  prompt -i "\n Checking for the existence of themes directory..."
+  if ! mv "$staging" "$target"; then
+    [[ -n "$old" ]] && mv "$old" "$target"
+    rm -rf "$staging"
+    return 1
+  fi
+  [[ -n "$old" ]] && rm -rf "$old"
+  info "Generated $screen theme at $target"
+}
 
-  [[ -d "${THEME_DIR}/min_rog" ]] && rm -rf "${THEME_DIR}/min_rog"
-  mkdir -p "${THEME_DIR}/min_rog"
-
-  # Copy theme
-  prompt -i "\n Installing Minimal ROG - ${screen} theme..."
-
-  # Don't preserve ownership because the owner will be root, and that causes the script to crash if it is ran from terminal by sudo
-  cp -a --no-preserve=ownership "${REO_DIR}/common/"{*.png,*.pf2} "${THEME_DIR}/min_rog"
-  cp -a --no-preserve=ownership "${REO_DIR}/config/theme-${screen}.txt" "${THEME_DIR}/min_rog/theme.txt"
-  cp -a --no-preserve=ownership "${REO_DIR}/backgrounds/${screen}.png" "${THEME_DIR}/min_rog/background.png"
-
-  if [[ ${screen} == 'ultrawide' ]]; then
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-1080p" "${THEME_DIR}/min_rog/icons"
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-select/select-1080p/"*.png "${THEME_DIR}/min_rog"
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/info-1080p.png" "${THEME_DIR}/min_rog/info.png"
-  elif [[ ${screen} == 'ultrawide2k' ]]; then
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-2k" "${THEME_DIR}/min_rog/icons"
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-select/select-2k/"*.png "${THEME_DIR}/min_rog"
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/info-2k.png" "${THEME_DIR}/min_rog/info.png"
+grub_mkconfig_command() {
+  if has_command grub-mkconfig; then
+    printf '%s\n' grub-mkconfig
+  elif has_command grub2-mkconfig; then
+    printf '%s\n' grub2-mkconfig
   else
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-white/icons-${screen}" "${THEME_DIR}/min_rog/icons"
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/assets-select/select-${screen}/"*.png "${THEME_DIR}/min_rog"
-    cp -a --no-preserve=ownership "${REO_DIR}/assets/info-${screen}.png" "${THEME_DIR}/min_rog/info.png"
+    return 1
   fi
 }
 
-install() {
-  local screen=${1}
-
-  # Check for root access and proceed if it is present
-  if [[ "$UID" -eq "$ROOT_UID" ]]; then
-    echo -e '\0033\0143'
-
-    # Generate the theme in "/usr/share/grub/themes"
-    generate "${screen}"
-
-    # Set theme
-    prompt -i "\n Setting Minimal ROG as default Grub theme..."
-
-    # Backup grub config
-    if [[ -f /etc/default/grub.bak ]]; then
-      prompt -w "\n File '/etc/default/grub.bak' already exists!"
-#      read choice
-#      if [[ "$choice" = 'y' ]]; then
-#        cp -a /etc/default/grub /etc/default/grub.bak
-#      else
-#        prompt -s "Skipping to save a backup configuration in '/etc/default/grub.bak'"
-#      fi
-    else
-      cp -an /etc/default/grub /etc/default/grub.bak
-    fi
-
-    # Fedora workaround to fix the missing unicode.pf2 file (tested on fedora 34): https://bugzilla.redhat.com/show_bug.cgi?id=1739762
-    # This occurs when we add a theme on grub2 with Fedora.
-    if has_command dnf; then
-      if [[ -f "/boot/grub2/fonts/unicode.pf2" ]]; then
-        if grep "GRUB_FONT=" /etc/default/grub 2>&1 >/dev/null; then
-          #Replace GRUB_FONT
-          sed -i "s|.*GRUB_FONT=.*|GRUB_FONT=/boot/grub2/fonts/unicode.pf2|" /etc/default/grub
-        else
-          #Append GRUB_FONT
-          echo "GRUB_FONT=/boot/grub2/fonts/unicode.pf2" >> /etc/default/grub
-        fi
-      fi
-    fi
-
-    if grep "GRUB_THEME=" /etc/default/grub 2>&1 >/dev/null; then
-      #Replace GRUB_THEME
-      sed -i "s|.*GRUB_THEME=.*|GRUB_THEME=\"${THEME_DIR}/min_rog/theme.txt\"|" /etc/default/grub
-    else
-      #Append GRUB_THEME
-      echo "GRUB_THEME=\"${THEME_DIR}/min_rog/theme.txt\"" >> /etc/default/grub
-    fi
-
-    if grep "GRUB_BACKGROUND=" /etc/default/grub 2>&1 >/dev/null; then
-      #Replace GRUB_BACKGROUND
-      sed -i "s|.*GRUB_BACKGROUND=.*|GRUB_BACKGROUND=\"${THEME_DIR}/min_rog/background.png\"|" /etc/default/grub
-    else
-      #Append GRUB_BACKGROUND
-      echo "GRUB_BACKGROUND=\"${THEME_DIR}/min_rog/background.png\"" >> /etc/default/grub
-    fi
-
-    # Make sure the right resolution for grub is set
-    if [[ ${screen} == '1080p' ]]; then
-      gfxmode="GRUB_GFXMODE=1920x1080,auto"
-    elif [[ ${screen} == 'ultrawide' ]]; then
-      gfxmode="GRUB_GFXMODE=2560x1080,auto"
-    elif [[ ${screen} == '4k' ]]; then
-      gfxmode="GRUB_GFXMODE=3840x2160,auto"
-    elif [[ ${screen} == '2k' ]]; then
-      gfxmode="GRUB_GFXMODE=2560x1440,auto"
-    elif [[ ${screen} == 'ultrawide2k' ]]; then
-      gfxmode="GRUB_GFXMODE=3440x1440,auto"
-    fi
-
-    if grep "GRUB_GFXMODE=" /etc/default/grub 2>&1 >/dev/null; then
-      #Replace GRUB_GFXMODE
-      sed -i "s|.*GRUB_GFXMODE=.*|${gfxmode}|" /etc/default/grub
-    else
-      #Append GRUB_GFXMODE
-      echo "${gfxmode}" >> /etc/default/grub
-    fi
-
-    if grep "GRUB_TERMINAL=console" /etc/default/grub 2>&1 >/dev/null || grep "GRUB_TERMINAL=\"console\"" /etc/default/grub 2>&1 >/dev/null; then
-      #Replace GRUB_TERMINAL
-      sed -i "s|.*GRUB_TERMINAL=.*|#GRUB_TERMINAL=console|" /etc/default/grub
-    fi
-
-    if grep "GRUB_TERMINAL_OUTPUT=console" /etc/default/grub 2>&1 >/dev/null || grep "GRUB_TERMINAL_OUTPUT=\"console\"" /etc/default/grub 2>&1 >/dev/null; then
-      #Replace GRUB_TERMINAL_OUTPUT
-      sed -i "s|.*GRUB_TERMINAL_OUTPUT=.*|#GRUB_TERMINAL_OUTPUT=console|" /etc/default/grub
-    fi
-
-    # For Kali linux
-    if [[ -f "/etc/default/grub.d/kali-themes.cfg" && ! -f "/etc/default/grub.d/kali-themes.cfg.bak" ]]; then
-      cp -an /etc/default/grub.d/kali-themes.cfg /etc/default/grub.d/kali-themes.cfg.bak
-      sed -i "s|.*GRUB_GFXMODE=.*|${gfxmode}|" /etc/default/grub.d/kali-themes.cfg
-      sed -i "s|.*GRUB_THEME=.*|GRUB_THEME=\"${THEME_DIR}/min_rog/theme.txt\"|" /etc/default/grub.d/kali-themes.cfg
-    fi
-
-    # Update grub config
-    prompt -s "\n Updating grub config...\n"
-    updating_grub
-    prompt -w "\n* On restart, you could see the Minimal ROG theme applied on your Grub \n"
-
-  #Check if password is cached (if cache timestamp has not expired yet)
-  elif sudo -n true 2> /dev/null && echo; then
-    if [[ "${install_boot}" == 'true' ]]; then
-      sudo "$0" -s ${screen} -b
-    else
-      sudo "$0" -s ${screen}
-    fi
-  else
-    #Ask for password
-    if [[ -n ${tui_root_login} ]] ; then
-      if [[ -n "${screen}" ]]; then
-        if [[ "${install_boot}" == 'true' ]]; then
-          sudo -S $0 -s ${screen} -b <<< ${tui_root_login}
-        else
-          sudo -S $0 -s ${screen} <<< ${tui_root_login}
-        fi
-      fi
-    else
-      prompt -e "\n [ Error! ] -> Run me as root! "
-      read -r -p " [ Trusted ] Specify the root password : " -t ${MAX_DELAY} -s
-      if sudo -S echo <<< $REPLY 2> /dev/null && echo; then
-        #Correct password, use with sudo's stdin
-        if [[ "${install_boot}" == 'true' ]]; then
-          sudo -S "$0" -s ${screen} -b <<< ${REPLY}
-        else
-          sudo -S "$0" -s ${screen} <<< ${REPLY}
-        fi
-      else
-        #block for 3 seconds before allowing another attempt
-        sleep 3
-        prompt -e "\n [ Error! ] -> Incorrect password!\n"
-        exit 1
-      fi
-    fi
+validate_grub_configuration() {
+  local generator candidate checker=""
+  if ! generator=$(grub_mkconfig_command); then
+    warn "Neither grub-mkconfig nor grub2-mkconfig is available."
+    return 1
   fi
-}
-
-run_dialog() {
-  if [[ -x /usr/bin/dialog ]]; then
-    if [[ "$UID" -ne "$ROOT_UID"  ]]; then
-      #Check if password is cached (if cache timestamp not expired yet)
-      if sudo -n true 2> /dev/null && echo; then
-        #No need to ask for password
-        sudo $0
-      else
-        #Ask for password
-        tui_root_login=$(dialog --backtitle ${Project_Name} \
-        --title  "ROOT LOGIN" \
-        --insecure \
-        --passwordbox  "require root permission" 8 50 \
-        --output-fd 1 )
-
-        if sudo -S echo <<< $tui_root_login 2> /dev/null && echo; then
-          #Correct password, use with sudo's stdin
-          sudo -S "$0" <<< $tui_root_login
-        else
-          #block for 3 seconds before allowing another attempt
-          sleep 3
-          echo -e '\0033\0143'
-          prompt -e "\n [ Error! ] -> Incorrect password!\n"
-          exit 1
-        fi
-      fi
-    fi
+  if ! candidate=$(mktemp); then
+    return 1
   fi
-}
-
-operation_canceled() {
-  echo -e '\0033\0143'
-  prompt -i "\n Operation canceled by user!"
-  exit 1
+  if ! "$generator" -o "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if has_command grub-script-check; then
+    checker=grub-script-check
+  elif has_command grub2-script-check; then
+    checker=grub2-script-check
+  fi
+  if [[ -n "$checker" ]] && ! "$checker" "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  [[ -s "$candidate" ]] || { rm -f "$candidate"; return 1; }
+  rm -f "$candidate"
 }
 
 updating_grub() {
   if has_command update-grub; then
     update-grub
-  elif has_command grub-mkconfig; then
+  elif has_command grub-mkconfig && [[ -d /boot/grub ]]; then
     grub-mkconfig -o /boot/grub/grub.cfg
-  # Check for OpenSuse (regular or microOS)
-  elif has_command zypper || has_command transactional-update; then
+  elif has_command grub2-mkconfig && [[ -d /boot/grub2 ]]; then
     grub2-mkconfig -o /boot/grub2/grub.cfg
-  # Check for Fedora (regular or Atomic)
-  elif has_command dnf || has_command rpm-ostree; then 
-    #Check for BIOS
-    if [[ -f /boot/grub2/grub.cfg ]]; then
-      grub2-mkconfig -o /boot/grub2/grub.cfg
-    fi
-  fi
-
-  # Success message
-  prompt -s "\n* All done! Restart to see changes!"
-}
-
-function install_program () {
-  if has_command zypper; then
-    zypper in "$@"
-  elif has_command apt-get; then
-    apt-get install "$@"
-  elif has_command dnf; then
-    dnf install -y "$@"
-  elif has_command yum; then
-    yum install "$@"
-  elif has_command pacman; then
-    pacman -S --noconfirm "$@"
-  fi
-}
-
-install_dialog() {
-  if [ ! "$(which dialog 2> /dev/null)" ]; then
-    prompt -w "\n 'dialog' need to be installed for this shell"
-    install_program "dialog"
-  fi
-}
-
-remove() {
-  # Check for root access and proceed if it is present
-  if [ "$UID" -eq "$ROOT_UID" ]; then
-    prompt -i " Checking for the existence of themes directory..."
-    if [[ -d "${THEME_DIR}/min_rog" ]]; then
-      prompt -i "\n Find installed theme: '${THEME_DIR}/min_rog'..."
-      rm -rf "${THEME_DIR}/min_rog"
-      prompt -w "\n Removed: '${THEME_DIR}/min_rog'..."
-    elif [[ -d "/boot/grub/themes/min_rog" ]]; then
-      prompt -i "\n Find installed theme: '/boot/grub/themes/min_rog'..."
-      rm -rf "/boot/grub/themes/min_rog"
-      prompt -w "\n Removed: '/boot/grub/themes/min_rog'..."
-    elif [[ -d "/boot/grub2/themes/min_rog" ]]; then
-      prompt -i "\n Find installed theme: '/boot/grub2/themes/min_rog'..."
-      rm -rf "/boot/grub2/themes/min_rog"
-      prompt -w "\n Removed: '/boot/grub2/themes/min_rog'..."
-    else
-      prompt -e "\n Minimal ROG theme is not installed!"
-      exit 0
-    fi
-
-    local grub_config_location=""
-
-    if [[ -f "/etc/default/grub" ]]; then
-      grub_config_location="/etc/default/grub"
-    elif [[ -f "/etc/default/grub.d/kali-themes.cfg" ]]; then
-      grub_config_location="/etc/default/grub.d/kali-themes.cfg"
-    else
-      prompt -e "\n Cannot find grub config file in default locations!"
-      prompt -w "\n Please inform the developers by opening an issue on github."
-      prompt -i "\n Exiting..."
-      exit 1
-    fi
-
-    local current_theme=""
-
-    current_theme="$(grep 'GRUB_THEME=' $grub_config_location | grep -v \#)"
-
-    if [[ -n "$current_theme" ]]; then
-      # Backup with --in-place option to grub.bak within the same directory; then remove the current theme.
-      sed --in-place='.bak' "s|$current_theme|#GRUB_THEME=|" "$grub_config_location"
-
-      if [[ -f "$grub_config_location".back ]]; then
-        rm -rf "$grub_config_location".back
-      fi
-
-      # Update grub config
-      prompt -i "\n Resetting grub theme...\n"
-      updating_grub
-    else
-      prompt -e "\n No active theme found."
-      prompt -i "\n Exiting..."
-      exit 1
-    fi
   else
-    #Check if password is cached (if cache timestamp not expired yet)
-    if sudo -n true 2> /dev/null && echo; then
-      #No need to ask for password
-      sudo "$0" -t ${theme} "${PROG_ARGS[@]}"
+    warn "No supported GRUB update command and output directory found."
+    return 1
+  fi
+}
+
+restore_grub_defaults() {
+  local backup=$1
+  cp -a --no-target-directory "$backup" "$GRUB_DEFAULT_FILE"
+}
+
+rollback_install_transaction() {
+  local target=$1 asset_backup=$2 had_state=$3 had_recorded_dir=$4 previous_recorded_dir=$5
+  rm -rf "$target"
+  if [[ -n "$asset_backup" && -e "$asset_backup" ]]; then
+    mv "$asset_backup" "$target"
+  fi
+  if [[ "$had_state" == false ]]; then
+    rm -f "$STATE_DIR/initialized" "$STATE_DIR/previous-theme-line" "$STATE_DIR/installed-theme-dir"
+  elif [[ "$had_recorded_dir" == true ]]; then
+    write_recorded_theme_dir "$previous_recorded_dir"
+  else
+    rm -f "$STATE_DIR/installed-theme-dir"
+  fi
+}
+
+install_theme() {
+  local screen=$1 backup target asset_backup="" had_state=false
+  local had_recorded_dir=false previous_recorded_dir=""
+  require_root
+  backup=$(backup_grub_defaults)
+  [[ -e "$STATE_DIR/initialized" ]] && had_state=true
+  if [[ -f "$STATE_DIR/installed-theme-dir" ]]; then
+    had_recorded_dir=true
+    previous_recorded_dir=$(<"$STATE_DIR/installed-theme-dir")
+  fi
+  capture_previous_theme
+
+  target="$THEME_DIR/min_rog"
+  if [[ -e "$target" || -L "$target" ]]; then
+    install -d -m 0700 "$STATE_DIR" || die "Cannot create state directory: $STATE_DIR"
+    if ! asset_backup=$(mktemp -d "$STATE_DIR/.theme-rollback.XXXXXX"); then
+      if [[ "$had_state" == false ]]; then
+        rm -f "$STATE_DIR/initialized" "$STATE_DIR/previous-theme-line" "$STATE_DIR/installed-theme-dir"
+      fi
+      die "Cannot allocate an asset rollback directory."
+    fi
+    if ! rmdir "$asset_backup" || ! mv "$target" "$asset_backup"; then
+      rm -rf "$asset_backup"
+      if [[ "$had_state" == false ]]; then
+        rm -f "$STATE_DIR/initialized" "$STATE_DIR/previous-theme-line" "$STATE_DIR/installed-theme-dir"
+      fi
+      die "Cannot move the existing theme into the rollback directory."
+    fi
+  fi
+
+  if ! generate "$screen"; then
+    rollback_install_transaction "$target" "$asset_backup" "$had_state" "$had_recorded_dir" "$previous_recorded_dir"
+    die "Theme asset staging failed; restored the previous installation."
+  fi
+  if ! record_theme_dir || ! set_theme_config; then
+    restore_grub_defaults "$backup"
+    rollback_install_transaction "$target" "$asset_backup" "$had_state" "$had_recorded_dir" "$previous_recorded_dir"
+    die "Failed to record the installation; restored previous configuration and assets."
+  fi
+
+  if ! validate_grub_configuration; then
+    restore_grub_defaults "$backup"
+    rollback_install_transaction "$target" "$asset_backup" "$had_state" "$had_recorded_dir" "$previous_recorded_dir"
+    die "Candidate GRUB configuration failed validation; restored previous configuration and assets."
+  fi
+  if ! updating_grub; then
+    restore_grub_defaults "$backup"
+    rollback_install_transaction "$target" "$asset_backup" "$had_state" "$had_recorded_dir" "$previous_recorded_dir"
+    updating_grub || true
+    die "GRUB update failed; restored defaults and assets from the rollback snapshots."
+  fi
+  [[ -n "$asset_backup" ]] && rm -rf "$asset_backup"
+  info "Installed Minimal ROG theme. Rollback snapshot: $backup"
+}
+
+remove_theme() {
+  require_root
+  load_recorded_theme_dir
+  local backup changed=true
+  backup=$(backup_grub_defaults)
+
+  if unset_theme_config; then
+    changed=true
+  else
+    local rc=$?
+    if [[ $rc -eq 3 ]]; then
+      changed=false
     else
-      #Ask for password
-      prompt -e "\n [ Error! ] -> Run me as root! "
-      read -r -p " [ Trusted ] Specify the root password : " -t ${MAX_DELAY} -s
-
-      if sudo -S echo <<< $REPLY 2> /dev/null && echo; then
-        #Correct password, use with sudo's stdin
-        sudo -S "$0" -t ${theme} "${PROG_ARGS[@]}" <<< $REPLY
-      else
-        #block for 3 seconds before allowing another attempt
-        sleep 3
-        echo -e '\0033\0143'
-        prompt -e "\n [ Error! ] -> Incorrect password!\n"
-        exit 1
-      fi
+      die "Failed to update $GRUB_DEFAULT_FILE"
     fi
   fi
-}
 
-dialog_installer() {
-  if [[ ! -x /usr/bin/dialog ]];  then
-    if [[ $UID -ne $ROOT_UID ]];  then
-      #Check if password is cached (if cache timestamp not expired yet)
-
-      if sudo -n true 2> /dev/null && echo; then
-        #No need to ask for password
-        exec sudo $0
-      else
-        #Ask for password
-        prompt -e "\n [ Error! ] -> Run me as root! "
-        read -r -p " [ Trusted ] Specify the root password : " -t ${MAX_DELAY} -s
-
-        if sudo -S echo <<< $REPLY 2> /dev/null && echo; then
-          #Correct password, use with sudo's stdin
-          sudo $0 <<< $REPLY
-        else
-          #block for 3 seconds before allowing another attempt
-          sleep 3
-          prompt -e "\n [ Error! ] -> Incorrect password!\n"
-          exit 1
-        fi
-      fi
+  if [[ "$changed" == true ]]; then
+    if ! validate_grub_configuration; then
+      restore_grub_defaults "$backup"
+      die "Candidate GRUB configuration failed validation; restored $GRUB_DEFAULT_FILE."
     fi
-    install_dialog
+    if ! updating_grub; then
+      restore_grub_defaults "$backup"
+      updating_grub || true
+      die "GRUB update failed; restored defaults from $backup and attempted regeneration."
+    fi
   fi
-  run_dialog
-  install "${screen}"
-  exit 1
+
+  rm -rf "$THEME_DIR/min_rog"
+  rm -f "$STATE_DIR/initialized" "$STATE_DIR/previous-theme-line" "$STATE_DIR/installed-theme-dir"
+  info "Removed Minimal ROG theme. Rollback snapshot: $backup"
 }
 
-#######################################################
-#   :::::: A R G U M E N T   H A N D L I N G ::::::   #
-#######################################################
+main() {
+  local action=install screen=1080p generate_dir="" install_boot=false
 
-install=install
+  while (($#)); do
+    case "$1" in
+      -s|--screen)
+        (($# >= 2)) || die "$1 requires a screen variant"
+        screen=$2
+        shift 2
+        ;;
+      -r|--remove)
+        action=remove
+        shift
+        ;;
+      -g|--generate)
+        (($# >= 2)) || die "$1 requires a destination directory"
+        action=generate
+        generate_dir=$2
+        shift 2
+        ;;
+      -b|--boot)
+        install_boot=true
+        shift
+        ;;
+      -h|--help)
+        usage
+        return 0
+        ;;
+      *)
+        die "Unrecognized option: $1"
+        ;;
+    esac
+  done
 
-while [[ $# -gt 0 ]]; do
-  PROG_ARGS+=("${1}")
-  dialog='false'
-  case "${1}" in
-    -r|--remove)
-      remove='true'
-      shift
-      for theme in "${@}"; do
-        case "${theme}" in
-          min-rog)
-            themes+=("${THEME_VARIANTS[0]}")
-            shift
-            ;;
-          -*)
-            break
-            ;;
-          *)
-            prompt -e "ERROR: Unrecognized theme variant '$1'."
-            prompt -i "Try '$0 --help' for more information."
-            exit 1
-            ;;
-        esac
-      done
-      ;;
-    -g|--generate)
-      shift 1
-      THEME_DIR="${1}"
-      install=generate
-      shift 1
-      ;;
-    -b|--boot)
-      install_boot='true'
-      shift 1
-      ;;
-    -s|--screen)
-      shift
-      for screen in "${@}"; do
-        case "${screen}" in
-          1080p)
-            screens+=("${SCREEN_VARIANTS[0]}")
-            shift
-            ;;
-          2k)
-            screens+=("${SCREEN_VARIANTS[1]}")
-            shift
-            ;;
-          4k)
-            screens+=("${SCREEN_VARIANTS[2]}")
-            shift
-            ;;
-          ultrawide)
-            screens+=("${SCREEN_VARIANTS[3]}")
-            shift
-            ;;
-          ultrawide2k)
-            screens+=("${SCREEN_VARIANTS[4]}")
-            shift
-            ;;
-          -*)
-            break
-            ;;
-          *)
-            prompt -e "ERROR: Unrecognized icon variant '$1'."
-            prompt -i "Try '$0 --help' for more information."
-            exit 1
-            ;;
-        esac
-      done
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      prompt -e "ERROR: Unrecognized installation option '$1'."
-      prompt -i "Try '$0 --help' for more information."
-      exit 1
+  validate_screen "$screen"
+
+  if [[ "$install_boot" == true ]]; then
+    if [[ -d /boot/grub2 ]]; then
+      THEME_DIR=/boot/grub2/themes
+    elif [[ -d /boot/grub ]]; then
+      THEME_DIR=/boot/grub/themes
+    else
+      die "Cannot find /boot/grub or /boot/grub2"
+    fi
+  fi
+
+  case "$action" in
+    install) install_theme "$screen" ;;
+    remove) remove_theme ;;
+    generate)
+      [[ -n "$generate_dir" ]] || die "Generate destination is empty"
+      THEME_DIR=$generate_dir
+      generate "$screen"
       ;;
   esac
-done
+}
 
-#############################
-#   :::::: M A I N ::::::   #
-#############################
-
-# Show terminal user interface for better use
-if [[ "${dialog:-}" == 'false' ]]; then
-  if [[ "${remove:-}" != 'true' ]]; then
-    for screen in "${screens[@]-${SCREEN_VARIANTS[0]}}"; do
-      $install "${screen}"
-    done
-  elif [[ "${remove:-}" == 'true' ]]; then
-    remove "min-rog"
-  fi
-else
-  dialog_installer
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-exit 0
